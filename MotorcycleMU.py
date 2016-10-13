@@ -68,11 +68,14 @@ thermocouple = MAX6675(cs_pin, clock_pin, data_pin, units)
 EngineTemp = 0; 
 AmbientTemp = 0
 
+LcdDisplayMode = 1
+
+
 oldlong = 0 
 oldlat = 0 
 
 oldktemp = 0
-tempqlen = 10
+tempqlen = 31
 ktempq = collections.deque(maxlen=tempqlen)
 
 
@@ -148,16 +151,15 @@ def UpdateTemps():
 
     try:
         EngineTemp = thermocouple.get()
-        #if(EngineTemp < 200 ):                  # check to remove unrealistic measurement...which happen frequently due to engine noise.              
-            #ktempq.append(EngineTemp)            
-            #qavg = sum(ktempq) / ktempq.__len__()
+        if(EngineTemp < 200 ):                  # check to remove unrealistic measurement...which happen frequently due to engine noise.              
+            ktempq.append(EngineTemp)            
+            qavg = sum(ktempq) / ktempq.__len__()
             #if(abs(EngineTemp-qavg) < 10):
                 #logTemplineDB("engine", EngineTemp)
-        lcdline1 = "E:%4.1fC A:%4.1fC" % (EngineTemp, AmbientTemp)  
+        #lcdline1 = "E:%4.1fC A:%4.1fC" % (EngineTemp, AmbientTemp)  
     except KeyboardInterrupt:                        
         raise   
     except MAX6675Error as e:
-        #EngineTemp = "Error: "+ e.value
         EngineTemp = -10
         logging.error("UpdateTemps() Excepted getting enginetemp: ", exc_info=True)
     
@@ -258,8 +260,8 @@ def LogGPSPoint():
                                                                                                                                                                                                                                   EngineTemp, 
                                                                                                                                                                                                                                   AmbientTemp, 
                                                                                                                                                                                                                                  len(agps_thread.data_stream.satellites))
-            print(sql)
-            logging.debug(sql)
+            #print(sql)
+            #logging.debug(sql)
     except KeyboardInterrupt:                        
         raise
     except:
@@ -293,40 +295,7 @@ class GpsPoller(threading.Thread):
             time.sleep(2)
 
             
-#             try:
-#                 gpsd = GPS(mode=WATCH_ENABLE) #starting the stream of info
-#                 gps_connected = True
-#             except KeyboardInterrupt:                        
-#                 raise
-#             except:
-#                 logging.error("GPSPoller() excepted connecting to GPSD ", exc_info=True)
-#                 gps_connected = False
-#             
-#             oldtime = time.time()
-#             while(gps_connected == True):
-#                 if(gpsd.waiting(3000)):                
-#                     try:                        
-#                         gpsd.next() #this will continue to loop and grab EACH set of gpsd info to clear the buffer
-#                         logging.debug("seconds passed since last GPS sentence: %s", (time.time() - oldtime))
-#                         if(time.time() - oldtime > 2):                            
-#                             oldtime = time.time()
-#                             LogGPSPoint()                        
-#                     except JsonError:
-#                         logging.error("run() -> gpsd.next() threw JsonError", exc_info=True)
-#                         gps_connected = False                
-#                     except ValueError:
-#                         logging.error("run() -> gpsd.next() threw ValueError", exc_info=True)
-#                         gps_connected = False
-#                     except StopIteration:                    
-#                         logging.error("run() -> gpsd.next() threw stopiteration", exc_info=True)
-#                         gps_connected = False
-#                     except KeyboardInterrupt:                        
-#                         raise
-#                 
-#                 #time.sleep(0.5)
-#                 
-#             #time.sleep(5)
-             
+            
  
  
  
@@ -352,20 +321,43 @@ class LcdUpdate(threading.Thread):
                         
             if(oled != None):
                 i2cLock.acquire()
-                try:
-                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
-                    oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
-                    oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
-                    oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
-                    oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
-                    oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
-                    #print("LCDString1: %s" % lcdline1)
-                    #print("LCDString2: %s" % lcdline2)
-                    #print("LCDString3: %s" % lcdline3)
-                    oled.display()
-                finally:
-                    i2cLock.release()
-                    
+                if(LcdDisplayMode == 1):
+                
+                    try:
+                        x = 0 
+                        oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                        for i in list(ktempq):
+                            x = x + 4 
+                            y = 63 - int(((i-10)/170)*100) 
+                            print("x:{}  y:{}".format(x,y))
+                            
+                            oled.canvas.line((x,63,x,y), width=3, fill=1)
+                        oled.display()                       
+                        
+                    finally:
+                        i2cLock.release()
+                
+                else:
+                
+                    try:
+                        oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                        oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
+                        oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
+                        oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
+                        oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
+                        oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
+                        #print("LCDString1: %s" % lcdline1)
+                        #print("LCDString2: %s" % lcdline2)
+                        #print("LCDString3: %s" % lcdline3)
+                        oled.display()
+                    finally:
+                        i2cLock.release()
+
+
+
+
+
+                        
             if(lcd != None):            
                 lcdline3 = datetime.datetime.now()
                 i2cLock.acquire()
@@ -379,7 +371,7 @@ class LcdUpdate(threading.Thread):
                     logging.debug("LCDString2: %s" % lcdline2)
                 finally:
                     i2cLock.release()
-                #lcd = None
+                    
             time.sleep(0.2)            
              
 
