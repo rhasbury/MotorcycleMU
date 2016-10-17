@@ -91,6 +91,8 @@ lcdline1 = "alt"
 lcdline2 = "spd"
 lcdline3 = "time"
 
+ChangeLCDMode = False
+
 i2cLock = threading.Lock()
 
 
@@ -107,6 +109,7 @@ def signal_quitting(signal, frame):
     gpsp.running = False
     tempthread.running = False
     lcdthread.running = False
+    buttonwatcher.running = False
     
     ninedof.stop()
     
@@ -115,6 +118,8 @@ def signal_quitting(signal, frame):
     lcdthread.join(2)
     logging.info("lcd update thread killed, quitting")
     tempthread.join(2)
+    logging.info("button watcher thread killed, quitting")
+    buttonwatcher.join(2)
     logging.info("temperature updating thread killed, quitting")
     logging.info("all threads killed, quitting")
     logging.info('You pressed Ctrl+C!')    
@@ -143,6 +148,7 @@ def UpdateTemps():
     global tmp
     global oldktemp
     global strip
+    
     
     tmp = None
 #     i2cLock.acquire()
@@ -196,9 +202,6 @@ def UpdateTemps():
         strip.setPixelColorRGB(1, int(colour[0]*255), int(colour[1]*255), int(colour[2]*255))
         strip.show()
         #logging.error("changed LEDs")
-        
-    
-    #print (lcdstring)
 
 
 
@@ -305,10 +308,34 @@ class GpsPoller(threading.Thread):
             LogGPSPoint()
             time.sleep(2)
 
+class ButtonWatcher(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.current_value = None
+        self.running = True #setting the thread running to true 
+    
+    
+    def run(self):
+        global ChangeLCDMode
+        released = True
+        while (self.running):
+                
+            # Check for button press on ADC
+            i2cLock.acquire()
+            try:
+                value = adc.read_adc(0, gain=GAIN)
+            finally:
+                i2cLock.release()
+                
+            if(value > 500 and released == True):
+                ChangeLCDMode = True
+                released = False
             
+            time.sleep(0.01)
             
- 
- 
+            if(value < 500 ):
+                released = True
+        
  
 class LcdUpdate(threading.Thread):
     
@@ -329,27 +356,19 @@ class LcdUpdate(threading.Thread):
         global lcdline2                 
         global lcdline3
         global LcdDisplayMode
+        global ChangeLCDMode
         counter = 0
          
         while self.running:
-              
-              
-            # Check for button press on ADC
-            i2cLock.acquire()
-            try:
-                value = adc.read_adc(0, gain=GAIN)
-            finally:
-                i2cLock.release()
-                
-            if(value > 500):
+            if(ChangeLCDMode == True):
                 if(LcdDisplayMode == 5):
                     LcdDisplayMode = 0
                 else:
                     LcdDisplayMode += 1
-                
-                
-            #print(value)
-            
+                time.sleep(0.2)
+                ChangeLCDMode = False
+            else:
+                time.sleep(0.2)
                         
             if(oled != None):
                 
@@ -464,15 +483,9 @@ class LcdUpdate(threading.Thread):
                 finally:
                     i2cLock.release()
             
-#             counter = counter + 1
-#             if(counter > 10):
-#                 if(LcdDisplayMode == 5):
-#                     LcdDisplayMode = 0
-#                 else:
-#                     LcdDisplayMode += 1
-#                 counter = 0 
+
                   
-            time.sleep(0.2)            
+              
              
 
  
@@ -560,6 +573,9 @@ if __name__ == "__main__":
         
         tempthread = TempUpdates()
         tempthread.start()
+    
+        buttonwatcher = ButtonWatcher()
+        buttonwatcher.start()
     
         #if(lcd != None):
         lcdthread = LcdUpdate()
