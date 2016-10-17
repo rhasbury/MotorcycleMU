@@ -18,6 +18,7 @@ sudo pip3 install pymysql
 sudo pip3 install RPi.GPIO
 sudo pip3 install python-dateutil
 sudo pip3 install gps3
+sudo pip3 install adafruit-ads1x15
 
 
 

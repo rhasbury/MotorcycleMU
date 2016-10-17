@@ -1,4 +1,5 @@
-
+#!/usr/bin/python3.4
+# -*- coding: utf-8 -*-
 import os
 #from builtins import None
 #os.system("export QUICK2WIRE_API_HOME=~/temperature/quick2wire-python-api")
@@ -23,6 +24,11 @@ import collections
 import colorsys
 
 from gps3.agps3threaded import AGPS3mechanism
+
+import Adafruit_ADS1x15
+adc = Adafruit_ADS1x15.ADS1115()
+GAIN = 1
+
 
 
 from lib_oled96 import ssd1306
@@ -68,15 +74,17 @@ thermocouple = MAX6675(cs_pin, clock_pin, data_pin, units)
 EngineTemp = 0; 
 AmbientTemp = 0
 
-LcdDisplayMode = 1
+LcdDisplayMode = 2
 
 
 oldlong = 0 
 oldlat = 0 
 
 oldktemp = 0
-tempqlen = 31
-ktempq = collections.deque(maxlen=tempqlen)
+qlen = 51
+ktempq = collections.deque(maxlen=qlen)
+speedq = collections.deque(maxlen=qlen)
+altq = collections.deque(maxlen=qlen)
 
 
 lcdline1 = "alt"
@@ -245,21 +253,24 @@ def LogGPSPoint():
             lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.altitude)
             lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
             lcdline3 = gtime.strftime('%I:%M')
+            speedq.append(agps_thread.data_stream.speed * 3.6)
+            altq.append(agps_thread.data_stream.altitude)
+            
         elif(agps_thread.data_stream.mode != 3):
             lcdline1 = "  "
             lcdline2 = "NoFix"
             lcdline3 = "  "
 
-            sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.lon,                                                                                                                                                                                                                                   
-                                                                                                                                                                                                                                  agps_thread.data_stream.speed, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.alt, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.mode, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.track, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.climb, 
-                                                                                                                                                                                                                                  EngineTemp, 
-                                                                                                                                                                                                                                  AmbientTemp, 
-                                                                                                                                                                                                                                 len(agps_thread.data_stream.satellites))
+#             sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
+#                                                                                                                                                                                                                                   agps_thread.data_stream.lon,                                                                                                                                                                                                                                   
+#                                                                                                                                                                                                                                   agps_thread.data_stream.speed, 
+#                                                                                                                                                                                                                                   agps_thread.data_stream.alt, 
+#                                                                                                                                                                                                                                   agps_thread.data_stream.mode, 
+#                                                                                                                                                                                                                                   agps_thread.data_stream.track, 
+#                                                                                                                                                                                                                                   agps_thread.data_stream.climb, 
+#                                                                                                                                                                                                                                   EngineTemp, 
+#                                                                                                                                                                                                                                   AmbientTemp, 
+#                                                                                                                                                                                                                                  len(agps_thread.data_stream.satellites))
             #print(sql)
             #logging.debug(sql)
     except KeyboardInterrupt:                        
@@ -317,45 +328,126 @@ class LcdUpdate(threading.Thread):
         global lcdline1
         global lcdline2                 
         global lcdline3
+        global LcdDisplayMode
+        counter = 0
+         
         while self.running:
+              
+              
+            # Check for button press on ADC
+            i2cLock.acquire()
+            try:
+                value = adc.read_adc(0, gain=GAIN)
+            finally:
+                i2cLock.release()
+                
+            if(value > 500):
+                if(LcdDisplayMode == 5):
+                    LcdDisplayMode = 0
+                else:
+                    LcdDisplayMode += 1
+                
+                
+            #print(value)
+            
                         
             if(oled != None):
-                i2cLock.acquire()
-                if(LcdDisplayMode == 1):
                 
-                    try:
-                        x = 0 
-                        oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
-                        for i in list(ktempq):
-                            x = x + 4 
-                            y = 63 - int(((i-10)/170)*100) 
-                            print("x:{}  y:{}".format(x,y))
-                            
-                            oled.canvas.line((x,63,x,y), width=3, fill=1)
-                        oled.display()                       
+                if(LcdDisplayMode == 1):                
+
+                    x = 24 
+                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    
+                    oled.canvas.text((30,1),  "Engine Temp (\N{DEGREE SIGN}C)", font=font, fill=1)
+                    
+                    oled.canvas.line((25,30,128,30), width=1, fill=1)        
+                    oled.canvas.text((3,25), "100", font=font, fill=1)
+                    oled.canvas.line((25,48,128,48), width=1, fill=1)
+                    oled.canvas.text((3,43), "50", font=font, fill=1)
+                    oled.canvas.line((25,11,128,11), width=1, fill=1)
+                    oled.canvas.text((3,6), "150", font=font, fill=1)
+                    
+                    
+                    for i in list(ktempq):
+                        x = x + 2 
+                        y = 63 - int(((i-10)/170)*63) 
+                        #print("x:{}  y:{}".format(x,y))                            
+                        oled.canvas.line((x,63,x,y), width=2, fill=1)
+
+                
+                elif(LcdDisplayMode == 2):
+                    
+                    x = 24 
+                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    
+                    oled.canvas.text((40,1), "Speed (km/h)", font=font, fill=1)
+                    
+                    oled.canvas.line((25,30,128,30), width=1, fill=1)        
+                    oled.canvas.text((3,25), "100", font=font, fill=1)
+                    oled.canvas.line((25,48,128,48), width=1, fill=1)
+                    oled.canvas.text((3,43), "50", font=font, fill=1)
+                    oled.canvas.line((25,11,128,11), width=1, fill=1)
+                    oled.canvas.text((3,6), "150", font=font, fill=1)
+                    
+                    
+                    for i in list(speedq):
+                        x = x + 2 
+                        y = 63 - int(((i-10)/170)*63) 
+                        #print("x:{}  y:{}".format(x,y))                            
+                        oled.canvas.line((x,63,x,y), width=2, fill=1)
+            
+                    
+                    
+                elif(LcdDisplayMode == 3):
+
+                    x = 24 
+                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    
+                    oled.canvas.text((40,1), "Altitude (m)", font=font, fill=1)
+                    
+                    oled.canvas.line((25,54,128,54), width=1, fill=1)        
+                    oled.canvas.text((3,49), "160", font=font, fill=1)
+                    oled.canvas.line((25,38,128,38), width=1, fill=1)
+                    oled.canvas.text((3,33), "320", font=font, fill=1)
+                    oled.canvas.line((25,22,128,22), width=1, fill=1)
+                    oled.canvas.text((3,17), "480", font=font, fill=1)
+                    
+                    
+                    for i in list(altq):
+                        x = x + 2 
+                        y = 63 - int(((i-70)/630)*63) 
+                        #print("x:{}  y:{}".format(x,y))                            
+                        oled.canvas.line((x,63,x,y), width=2, fill=1)
+                                        
+                
+
+                elif(LcdDisplayMode == 4):
+                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    if(agps_thread.data_stream.mode == 3):
+                        gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)                        
+                        oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
+                    else:
+                        oled.canvas.text((10,20), "No fix", font=font30, fill=1)
                         
-                    finally:
-                        i2cLock.release()
+
                 
                 else:
-                
-                    try:
-                        oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
-                        oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
-                        oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
-                        oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
-                        oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
-                        oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
-                        #print("LCDString1: %s" % lcdline1)
-                        #print("LCDString2: %s" % lcdline2)
-                        #print("LCDString3: %s" % lcdline3)
-                        oled.display()
-                    finally:
-                        i2cLock.release()
+                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
+                    oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
+                    oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
+                    oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
+                    oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
+                    #print("LCDString1: %s" % lcdline1)
+                    #print("LCDString2: %s" % lcdline2)
+                    #print("LCDString3: %s" % lcdline3)
 
 
-
-
+            i2cLock.acquire()
+            try:
+                oled.display()
+            finally:
+                i2cLock.release()
 
                         
             if(lcd != None):            
@@ -371,7 +463,15 @@ class LcdUpdate(threading.Thread):
                     logging.debug("LCDString2: %s" % lcdline2)
                 finally:
                     i2cLock.release()
-                    
+            
+#             counter = counter + 1
+#             if(counter > 10):
+#                 if(LcdDisplayMode == 5):
+#                     LcdDisplayMode = 0
+#                 else:
+#                     LcdDisplayMode += 1
+#                 counter = 0 
+                  
             time.sleep(0.2)            
              
 
