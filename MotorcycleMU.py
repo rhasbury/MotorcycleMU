@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import logging
-logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', filename='./MotorcycleMU.log', level=logging.DEBUG)
+logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', filename='./MotorcycleMU.log', level=logging.INFO)
 import socket
 import datetime
 import pymysql.cursors
@@ -31,18 +31,12 @@ from max6675 import *
 from MPU6050 import sensor
 from neopixel import *
 
-
-
 #font = ImageFont.load_default()
 font = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 10)
 font15 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf', 15)
 font20 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 20)
 font30 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 30)
 
-oldlong = 0 
-oldlat = 0 
-
-oldktemp = 0
 qlen = 51
 ktempq = collections.deque(maxlen=qlen)
 speedq = collections.deque(maxlen=qlen)
@@ -57,9 +51,7 @@ def signal_quitting(signal, frame):
     lcdthread.running = False
     buttonwatcher.running = False
     
-    ninedof.stop()
        
-    
     gpsp.join(2) # wait for the thread to finish what it's doing
     logging.info("gps thread killed, quitting")
     lcdthread.join(2)
@@ -86,27 +78,16 @@ def logTemplineDB(location, temp):
 
 
 
-
-
-
-
-      
-     
-
-
-
-
-class GpsPoller(threading.Thread):
-    
-    
+class GpsPoller(threading.Thread):    
     def __init__(self):
         threading.Thread.__init__(self)
         self.current_value = None
         self.running = True #setting the thread running to true
         # GPS constants 
         self.logradius = 0.0001 # lattitude/long must change by this value to be saved to mysql
-
-
+              
+        self.oldlat = 0
+        self.oldlong = 0
  
     def run(self):
         global gpsd
@@ -118,22 +99,11 @@ class GpsPoller(threading.Thread):
             self.LogGPSPoint()
             time.sleep(2)
 
-
-
-
-
     def LogGPSPoint(self):
-        global gpsd
-        global EngineTemp
-        global AmbientTemp
-        global lcdline1
-        global lcdline2   
-        global lcdline3        
+
+     
         resp = ""
-       
-        global oldlat
-        global oldlong
-       
+                 
         try:
             con = pymysql.connect(host='localhost', user='monitor', passwd='password', db='gps', charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
             cur = con.cursor()
@@ -146,8 +116,8 @@ class GpsPoller(threading.Thread):
         try:    
             if(agps_thread.data_stream.mode == 3):
                 gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)
-                logging.debug("difference in old points {0}, {1} ".format(abs(oldlat - agps_thread.data_stream.lat), abs(oldlong - agps_thread.data_stream.lon)))
-                if(abs(oldlat - agps_thread.data_stream.lat) > self.logradius or abs(oldlong - agps_thread.data_stream.lon) > self.logradius):                 
+                logging.debug("difference in old points {0}, {1} ".format(abs(self.oldlat - agps_thread.data_stream.lat), abs(self.oldlong - agps_thread.data_stream.lon)))
+                if(abs(self.oldlat - agps_thread.data_stream.lat) > self.logradius or abs(self.oldlong - agps_thread.data_stream.lon) > self.logradius):                 
                     #print ('time utc    ' , gpsd.utc)
                     #print ('time utc    ' , agps_thread.data_stream.time)                
                     sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
@@ -164,21 +134,21 @@ class GpsPoller(threading.Thread):
                     sql = sql.replace("nan", "-9999")
                     cur.execute(sql)
                     con.commit()                
-                    oldlat = agps_thread.data_stream.lat
-                    oldlong = agps_thread.data_stream.lon
+                    self.oldlat = agps_thread.data_stream.lat
+                    self.oldlong = agps_thread.data_stream.lon
                     logging.debug("Rows inserted: %s" % cur.rowcount)
                     logging.debug("SQL String: %s" % sql)
                 
-                lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.altitude)
-                lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
-                lcdline3 = gtime.strftime('%I:%M')
+                lcdthread.lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.altitude)
+                lcdthread.lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
+                lcdthread.lcdline3 = gtime.strftime('%I:%M')
                 speedq.append(agps_thread.data_stream.speed * 3.6)
                 altq.append(agps_thread.data_stream.altitude)
                 
             elif(agps_thread.data_stream.mode != 3):
-                lcdline1 = "  "
-                lcdline2 = "NoFix"
-                lcdline3 = "  "
+                lcdthread.lcdline1 = "  "
+                lcdthread.lcdline2 = "NoFix"
+                lcdthread.lcdline3 = "  "
 
         except KeyboardInterrupt:                        
             raise
@@ -201,7 +171,17 @@ class ButtonWatcher(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
         self.current_value = None
-        self.running = True #setting the thread running to true 
+        self.running = True #setting the thread running to true
+        i2cLock.acquire()
+        try:
+            self.adc = Adafruit_ADS1x15.ADS1115()
+    
+        finally:
+            i2cLock.release()
+            
+            
+        
+        self.GAIN = 1 
     
     
     def run(self):
@@ -212,7 +192,7 @@ class ButtonWatcher(threading.Thread):
             # Check for button press on ADC
             i2cLock.acquire()
             try:
-                value = adc.read_adc(0, gain=GAIN)
+                value = self.adc.read_adc(0, gain=self.GAIN)
             finally:
                 i2cLock.release()
                 
@@ -226,15 +206,19 @@ class ButtonWatcher(threading.Thread):
                 released = True
         
  
-class LcdUpdate(threading.Thread):
-    
+class LcdUpdate(threading.Thread):    
     def __init__(self):
         threading.Thread.__init__(self)
         self.current_value = None
         self.running = True #setting the thread running to true 
         
-        self.LcdDisplayMode = 2
+        self.LcdDisplayMode = 2    
         self.ChangeLCDMode = False
+        
+        self.lcdline1 = "  "
+        self.lcdline2 = "NoFix"
+        self.lcdline3 = "  "
+
                         
                         
         i2cLock.acquire()
@@ -255,9 +239,6 @@ class LcdUpdate(threading.Thread):
             logging.error("Failed to create OLED object", exc_info=True)
             self.oled = None
 
-    
-        
-        
         
         i2cLock.acquire()
         try:
@@ -394,12 +375,6 @@ class LcdUpdate(threading.Thread):
                     i2cLock.release()
             
 
-                  
-              
-             
-
- 
-
 def IntegertoRGB(numberin):    
        
     H = 1 - ((numberin/30) * 0.4)
@@ -410,13 +385,14 @@ def IntegertoRGB(numberin):
     rgb = colorsys.hsv_to_rgb(H, S, B)
     return rgb
  
-class TempUpdates(threading.Thread):
 
-    
+class TempUpdates(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
         self.current_value = None
         self.running = True #setting the thread running to true
+        
+        self.tempDbLogInterval = 100
         
         self.EngineTemp = 0; 
         self.AmbientTemp = 0
@@ -476,15 +452,14 @@ class TempUpdates(threading.Thread):
         while self.running:
             self.UpdateTemps()
             time.sleep(1)
-
+        self.ninedof.stop()
 
     def UpdateTemps(self):
         global lcdline1
         global lcdline2
         global lcdline3
-        global oldktemp
-        global strip
         
+                
         
         if(self.tmp != None):
             i2cLock.acquire()
@@ -503,8 +478,8 @@ class TempUpdates(threading.Thread):
             if(self.EngineTemp < 200 ):                  # check to remove unrealistic measurement...which happen frequently due to engine noise.              
                 ktempq.append(self.EngineTemp)            
                 qavg = sum(ktempq) / ktempq.__len__()
-                if(abs(self.EngineTemp-qavg) < 10):
-                    logTemplineDB("engine", self.EngineTemp)
+                #if(abs(self.EngineTemp-qavg) < 10):                    
+                #    logTemplineDB("engine", self.EngineTemp)
               
         except KeyboardInterrupt:                        
             raise   
@@ -523,15 +498,23 @@ class TempUpdates(threading.Thread):
                 i2cLock.release()
     
                             
-            roll = roll + 90
-            charposition = round(abs(roll/12)) 
-            if (charposition < 12 and strip != None):
-                try:
-                    blackout(self.strip)
-                    self.strip.setPixelColorRGB(charposition, 100, 100, 100)
-                    self.strip.show()
-                except:
-                    logging.error("UpdateTemps() couldn't write to led strip", exc_info=True)
+            #roll = roll + 90
+            #print(self.ninedof.y_acc)
+            x_led_pos = round(abs((self.ninedof.x_acc+10)/20)*12)
+            y_led_pos = round(abs((self.ninedof.y_acc+10)/20)*12)
+            z_led_pos = round(abs((self.ninedof.z_acc+10)/20)*12) 
+            try:
+                self.blackout(self.strip)
+                if (x_led_pos < 12 and self.strip != None):                                    
+                    self.strip.setPixelColorRGB(x_led_pos, 0, 255, 0)
+                if (y_led_pos < 12 and self.strip != None):                                    
+                    self.strip.setPixelColorRGB(y_led_pos, 255, 0, 0)
+                if (z_led_pos < 12 and self.strip != None):                                    
+                    self.strip.setPixelColorRGB(z_led_pos, 0, 0, 255)
+                    
+                self.strip.show()
+            except:
+                logging.error("UpdateTemps() couldn't write to led strip", exc_info=True)
     
     
         
@@ -546,7 +529,7 @@ class TempUpdates(threading.Thread):
     
     
     
-    def blackout(strip):
+    def blackout(self, strip):
         for i in range(max(strip.numPixels(), strip.numPixels())):
             strip.setPixelColor(i, Color(0,0,0))
             strip.show()
@@ -569,41 +552,19 @@ def get_lock(process_name):
 
  
 if __name__ == "__main__":
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', filename='./MotorcycleMU.log', level=logging.DEBUG)
-    
-    
+    #logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', filename='./MotorcycleMU.log', level=logging.INFO)
+        
     get_lock('motorcyclemu')
-    #initialize various components. 
-    
- 
-    
+     
     i2cLock = threading.Lock()    
     i2cbus = SMBus(1)        
-    
-    adc = Adafruit_ADS1x15.ADS1115()
-    GAIN = 1
-
-    
-
-
-    
-    
+   
     try:
         agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
         agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
         agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default 0.2 second, default daemon=True    
     except:
         logging.error("Error creating GPS objects or data stream", exc_info=True)
-    
-
-
-
-    
-   
-
-    
-
-
 
 
     logging.info("Logging started")
