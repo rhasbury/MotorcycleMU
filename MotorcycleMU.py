@@ -1,13 +1,9 @@
 #!/usr/bin/python3.4
 # -*- coding: utf-8 -*-
 import os
-#from builtins import None
-#os.system("export QUICK2WIRE_API_HOME=~/temperature/quick2wire-python-api")
-#os.system("export PYTHONPATH=$PYTHONPATH:$QUICK2WIRE_API_HOME")
-#os.system("export MPU6050_PATH=~/temperature/MPU6050")
-#os.system("export PYTHONPATH=$PYTHONPATH:$MPU6050_PATH")
 import logging
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', filename='./MotorcycleMU.log', level=logging.DEBUG)
+import socket
 import datetime
 import pymysql.cursors
 import RPi.GPIO as GPIO
@@ -19,63 +15,29 @@ import sys
 import dateutil.parser
 import math
 import signal
-#import Adafruit_BMP.BMP085 as BMP085
 import collections
 import colorsys
-
+import Adafruit_BMP.BMP085 as BMP085
 from gps3.agps3threaded import AGPS3mechanism
-
 import Adafruit_ADS1x15
-adc = Adafruit_ADS1x15.ADS1115()
-GAIN = 1
-
-
 
 from lib_oled96 import ssd1306
 from smbus import SMBus
 from PIL import ImageFont, ImageDraw
-#font = ImageFont.load_default()
-font = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 10)
-font15 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf', 15)
-font20 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 20)
-font30 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 30)
-i2cbus = SMBus(1)        # 1 = Raspberry Pi but NOT early REV1 board
-try:
-    oled = ssd1306(i2cbus)   # create oled object, nominating the correct I2C bus, default address
-except:
-    oled = None
-
 
 from i2clibraries import i2c_lcd
 from max6675 import *
 #from gps import *
 from MPU6050 import sensor
-
-
 from neopixel import *
-# LED strip configuration:
-LED_COUNT      = 12       # Number of LED pixels.
-LED_PIN        = 18      # GPIO pin connected to the pixels (must support PWM!).
-LED_FREQ_HZ    = 800000  # LED signal frequency in hertz (usually 800khz)
-LED_DMA        = 5       # DMA channel to use for generating signal (try 5)
-LED_BRIGHTNESS = 50     # Set to 0 for darkest and 255 for brightest
-LED_INVERT     = False   # True to invert the signal (when using NPN transistor level shift)
 
-strip = None
 
-#signal.signal(signal.SIGINT, signal_handler)
 
-logradius = 0.0001 # lattitude/long must change by this value to be saved to mysql
-cs_pin = 22
-clock_pin = 27
-data_pin = 17
-units = "c"
-thermocouple = MAX6675(cs_pin, clock_pin, data_pin, units)
-EngineTemp = 0; 
-AmbientTemp = 0
-
-LcdDisplayMode = 2
-
+#font = ImageFont.load_default()
+font = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 10)
+font15 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf', 15)
+font20 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 20)
+font30 = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf', 30)
 
 oldlong = 0 
 oldlat = 0 
@@ -85,22 +47,6 @@ qlen = 51
 ktempq = collections.deque(maxlen=qlen)
 speedq = collections.deque(maxlen=qlen)
 altq = collections.deque(maxlen=qlen)
-
-
-lcdline1 = "alt"
-lcdline2 = "spd"
-lcdline3 = "time"
-
-ChangeLCDMode = False
-
-i2cLock = threading.Lock()
-
-
-gpsd = None #seting the global variable
-gpsp = None #
-tmp = None
-lcd = None
-
 
 def signal_quitting(signal, frame):
     global gpsp
@@ -112,6 +58,7 @@ def signal_quitting(signal, frame):
     buttonwatcher.running = False
     
     ninedof.stop()
+       
     
     gpsp.join(2) # wait for the thread to finish what it's doing
     logging.info("gps thread killed, quitting")
@@ -139,152 +86,10 @@ def logTemplineDB(location, temp):
 
 
 
-def UpdateTemps():
-    global EngineTemp
-    global AmbientTemp
-    global lcdline1
-    global lcdline2
-    global lcdline3    
-    global tmp
-    global oldktemp
-    global strip
-    
-    
-    tmp = None
-#     i2cLock.acquire()
-#     try:        
-#         tmp = BMP085.BMP085()        
-#         AmbientTemp = tmp.read_temperature()
-#         logTemplineDB("ambient", AmbientTemp)
-#     except:
-#         tmp = None
-#         logging.error("UpdateTemps() Ambient Temp Read Error: ", exc_info=True)
-#     finally:
-#         i2cLock.release()
-    AmbientTemp = 99
-
-    try:
-        EngineTemp = thermocouple.get()
-        if(EngineTemp < 200 ):                  # check to remove unrealistic measurement...which happen frequently due to engine noise.              
-            ktempq.append(EngineTemp)            
-            qavg = sum(ktempq) / ktempq.__len__()
-            #if(abs(EngineTemp-qavg) < 10):
-                #logTemplineDB("engine", EngineTemp)
-        #lcdline1 = "E:%4.1fC A:%4.1fC" % (EngineTemp, AmbientTemp)  
-    except KeyboardInterrupt:                        
-        raise   
-    except MAX6675Error as e:
-        EngineTemp = -10
-        logging.error("UpdateTemps() Excepted getting enginetemp: ", exc_info=True)
-    
-    if(ninedof != None):
-        i2cLock.acquire()
-        try:
-            roll = ninedof.roll
-            #lcdline3 = "Roll: %4.1f " % (ninedof.roll)
-            roll = roll + 90
-            charposition = round(abs(roll/12)) 
-            s = "              "
-            if (charposition < 15) :
-                lcdline3 = s[:charposition] + 'O' + s[charposition:]
-    
-        except:
-            logging.error("UpdateTemps() ninedof sensor couldn't be read", exc_info=True)
-        
-        finally:
-            i2cLock.release()
-    
-    if(strip != None):
-        
-        colour = IntegertoRGB(EngineTemp-80)
-        strip.setPixelColorRGB(0, int(colour[0]*255), int(colour[1]*255), int(colour[2]*255))        
-        colour = IntegertoRGB(AmbientTemp-25)
-        strip.setPixelColorRGB(1, int(colour[0]*255), int(colour[1]*255), int(colour[2]*255))
-        strip.show()
-        #logging.error("changed LEDs")
 
 
 
-def LogGPSPoint():
-    global gpsd
-    global EngineTemp
-    global AmbientTemp
-    global lcdline1
-    global lcdline2   
-    global lcdline3
-    global logradius
-    resp = ""
-   
-    global oldlat
-    global oldlong
-   
-    try:
-        con = pymysql.connect(host='localhost', user='monitor', passwd='password', db='gps', charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
-        cur = con.cursor()
-    except KeyboardInterrupt:                        
-        raise
-    except:
-        logging.error("LogGPSPoint: Error opening MySQL connection ", exc_info=True)
-        sys.exit(1)
-        
-    try:    
-        if(agps_thread.data_stream.mode == 3):
-            gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)
-            logging.debug("difference in old points {0}, {1} ".format(abs(oldlat - agps_thread.data_stream.lat), abs(oldlong - agps_thread.data_stream.lon)))
-            if(abs(oldlat - agps_thread.data_stream.lat) > logradius or abs(oldlong - agps_thread.data_stream.lon) > logradius):                 
-                #print ('time utc    ' , gpsd.utc)
-                #print ('time utc    ' , agps_thread.data_stream.time)                
-                sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.lon, 
-                                                                                                                                                                                                                                  mktime(gtime.timetuple()), 
-                                                                                                                                                                                                                                  agps_thread.data_stream.speed, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.alt, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.mode, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.track, 
-                                                                                                                                                                                                                                  agps_thread.data_stream.climb, 
-                                                                                                                                                                                                                                  EngineTemp, 
-                                                                                                                                                                                                                                  AmbientTemp, 
-                                                                                                                                                                                                                                  len(agps_thread.data_stream.satellites))
-                sql = sql.replace("nan", "-9999")
-                cur.execute(sql)
-                con.commit()                
-                oldlat = agps_thread.data_stream.lat
-                oldlong = agps_thread.data_stream.lon
-                logging.debug("Rows inserted: %s" % cur.rowcount)
-                logging.debug("SQL String: %s" % sql)
-            
-            lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.altitude)
-            lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
-            lcdline3 = gtime.strftime('%I:%M')
-            speedq.append(agps_thread.data_stream.speed * 3.6)
-            altq.append(agps_thread.data_stream.altitude)
-            
-        elif(agps_thread.data_stream.mode != 3):
-            lcdline1 = "  "
-            lcdline2 = "NoFix"
-            lcdline3 = "  "
 
-#             sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
-#                                                                                                                                                                                                                                   agps_thread.data_stream.lon,                                                                                                                                                                                                                                   
-#                                                                                                                                                                                                                                   agps_thread.data_stream.speed, 
-#                                                                                                                                                                                                                                   agps_thread.data_stream.alt, 
-#                                                                                                                                                                                                                                   agps_thread.data_stream.mode, 
-#                                                                                                                                                                                                                                   agps_thread.data_stream.track, 
-#                                                                                                                                                                                                                                   agps_thread.data_stream.climb, 
-#                                                                                                                                                                                                                                   EngineTemp, 
-#                                                                                                                                                                                                                                   AmbientTemp, 
-#                                                                                                                                                                                                                                  len(agps_thread.data_stream.satellites))
-            #print(sql)
-            #logging.debug(sql)
-    except KeyboardInterrupt:                        
-        raise
-    except:
-        #print (sys.exc_info()[0])
-        logging.error("LogGPSPoint() excepted trying to log GPS data ", exc_info=True)
-
-    finally:
-        if con:
-            con.close()
       
      
 
@@ -292,10 +97,15 @@ def LogGPSPoint():
 
 
 class GpsPoller(threading.Thread):
+    
+    
     def __init__(self):
         threading.Thread.__init__(self)
         self.current_value = None
         self.running = True #setting the thread running to true
+        # GPS constants 
+        self.logradius = 0.0001 # lattitude/long must change by this value to be saved to mysql
+
 
  
     def run(self):
@@ -305,8 +115,87 @@ class GpsPoller(threading.Thread):
         gps_connected = False
        
         while gpsp.running:
-            LogGPSPoint()
+            self.LogGPSPoint()
             time.sleep(2)
+
+
+
+
+
+    def LogGPSPoint(self):
+        global gpsd
+        global EngineTemp
+        global AmbientTemp
+        global lcdline1
+        global lcdline2   
+        global lcdline3        
+        resp = ""
+       
+        global oldlat
+        global oldlong
+       
+        try:
+            con = pymysql.connect(host='localhost', user='monitor', passwd='password', db='gps', charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
+            cur = con.cursor()
+        except KeyboardInterrupt:                        
+            raise
+        except:
+            logging.error("LogGPSPoint: Error opening MySQL connection ", exc_info=True)
+            sys.exit(1)
+            
+        try:    
+            if(agps_thread.data_stream.mode == 3):
+                gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)
+                logging.debug("difference in old points {0}, {1} ".format(abs(oldlat - agps_thread.data_stream.lat), abs(oldlong - agps_thread.data_stream.lon)))
+                if(abs(oldlat - agps_thread.data_stream.lat) > self.logradius or abs(oldlong - agps_thread.data_stream.lon) > self.logradius):                 
+                    #print ('time utc    ' , gpsd.utc)
+                    #print ('time utc    ' , agps_thread.data_stream.time)                
+                    sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
+                                                                                                                                                                                                                                      agps_thread.data_stream.lon, 
+                                                                                                                                                                                                                                      mktime(gtime.timetuple()), 
+                                                                                                                                                                                                                                      agps_thread.data_stream.speed, 
+                                                                                                                                                                                                                                      agps_thread.data_stream.alt, 
+                                                                                                                                                                                                                                      agps_thread.data_stream.mode, 
+                                                                                                                                                                                                                                      agps_thread.data_stream.track, 
+                                                                                                                                                                                                                                      agps_thread.data_stream.climb, 
+                                                                                                                                                                                                                                      ktempq[-1], 
+                                                                                                                                                                                                                                      AmbientTemp, 
+                                                                                                                                                                                                                                      len(agps_thread.data_stream.satellites))
+                    sql = sql.replace("nan", "-9999")
+                    cur.execute(sql)
+                    con.commit()                
+                    oldlat = agps_thread.data_stream.lat
+                    oldlong = agps_thread.data_stream.lon
+                    logging.debug("Rows inserted: %s" % cur.rowcount)
+                    logging.debug("SQL String: %s" % sql)
+                
+                lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.altitude)
+                lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
+                lcdline3 = gtime.strftime('%I:%M')
+                speedq.append(agps_thread.data_stream.speed * 3.6)
+                altq.append(agps_thread.data_stream.altitude)
+                
+            elif(agps_thread.data_stream.mode != 3):
+                lcdline1 = "  "
+                lcdline2 = "NoFix"
+                lcdline3 = "  "
+
+        except KeyboardInterrupt:                        
+            raise
+        except:
+            #print (sys.exc_info()[0])
+            logging.error("LogGPSPoint() excepted trying to log GPS data ", exc_info=True)
+    
+        finally:
+            if con:
+                con.close()
+
+
+
+
+
+
+
 
 class ButtonWatcher(threading.Thread):
     def __init__(self):
@@ -316,7 +205,7 @@ class ButtonWatcher(threading.Thread):
     
     
     def run(self):
-        global ChangeLCDMode
+        
         released = True
         while (self.running):
                 
@@ -328,7 +217,7 @@ class ButtonWatcher(threading.Thread):
                 i2cLock.release()
                 
             if(value > 500 and released == True):
-                ChangeLCDMode = True
+                lcdthread.ChangeLCDMode = True
                 released = False
             
             time.sleep(0.01)
@@ -343,141 +232,162 @@ class LcdUpdate(threading.Thread):
         threading.Thread.__init__(self)
         self.current_value = None
         self.running = True #setting the thread running to true 
+        
+        self.LcdDisplayMode = 2
+        self.ChangeLCDMode = False
+                        
+                        
         i2cLock.acquire()
         try:
-            oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
-            oled.cls()
+            # Configuration parameters
+            # I2C Address, Port, Enable pin, RW pin, RS pin, Data 4 pin, Data 5 pin, Data 6 pin, Data 7 pin, Backlight pin (optional)
+            self.lcd = i2c_lcd.i2c_lcd(0x27, 1, 2, 1, 0, 4, 5, 6, 7, 3)
+            self.lcd.backLightOn()
+        except IOError:
+            logging.info("LCD (the green kind) not found on I2C", exc_info=True)
+            self.lcd = None
         finally:
             i2cLock.release()
         
-    def run(self):
-        global lcd
+        try:
+            self.oled = ssd1306(i2cbus)   # create self.oled object, nominating the correct I2C bus, default address
+        except:
+            logging.error("Failed to create OLED object", exc_info=True)
+            self.oled = None
+
+    
+        
+        
+        
+        i2cLock.acquire()
+        try:
+            self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
+            self.oled.cls()
+        finally:
+            i2cLock.release()
+        
+    def run(self):        
         global lcdline1
         global lcdline2                 
         global lcdline3
-        global LcdDisplayMode
-        global ChangeLCDMode
+                
         counter = 0
          
         while self.running:
-            if(ChangeLCDMode == True):
-                if(LcdDisplayMode == 5):
-                    LcdDisplayMode = 0
+            if(self.ChangeLCDMode == True):
+                if(self.LcdDisplayMode == 5):
+                    self.LcdDisplayMode = 0
                 else:
-                    LcdDisplayMode += 1
+                    self.LcdDisplayMode += 1
                 time.sleep(0.2)
-                ChangeLCDMode = False
+                self.ChangeLCDMode = False
             else:
                 time.sleep(0.2)
                         
-            if(oled != None):
+            if(self.oled != None):
                 
-                if(LcdDisplayMode == 1):                
+                if(self.LcdDisplayMode == 1):                
 
                     x = 24 
-                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
                     
-                    oled.canvas.text((30,1),  "Engine Temp (\N{DEGREE SIGN}C)", font=font, fill=1)
+                    self.oled.canvas.text((30,1),  "Engine Temp (\N{DEGREE SIGN}C)", font=font, fill=1)
                     
-                    oled.canvas.line((25,30,128,30), width=1, fill=1)        
-                    oled.canvas.text((3,25), "100", font=font, fill=1)
-                    oled.canvas.line((25,48,128,48), width=1, fill=1)
-                    oled.canvas.text((3,43), "50", font=font, fill=1)
-                    oled.canvas.line((25,11,128,11), width=1, fill=1)
-                    oled.canvas.text((3,6), "150", font=font, fill=1)
+                    self.oled.canvas.line((25,30,128,30), width=1, fill=1)        
+                    self.oled.canvas.text((3,25), "100", font=font, fill=1)
+                    self.oled.canvas.line((25,48,128,48), width=1, fill=1)
+                    self.oled.canvas.text((3,43), "50", font=font, fill=1)
+                    self.oled.canvas.line((25,11,128,11), width=1, fill=1)
+                    self.oled.canvas.text((3,6), "150", font=font, fill=1)
                     
                     
                     for i in list(ktempq):
                         x = x + 2 
                         y = 63 - int(((i-10)/170)*63) 
                         #print("x:{}  y:{}".format(x,y))                            
-                        oled.canvas.line((x,63,x,y), width=2, fill=1)
+                        self.oled.canvas.line((x,63,x,y), width=2, fill=1)
 
                 
-                elif(LcdDisplayMode == 2):
+                elif(self.LcdDisplayMode == 2):
                     
                     x = 24 
-                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
                     
-                    oled.canvas.text((40,1), "Speed (km/h)", font=font, fill=1)
+                    self.oled.canvas.text((40,1), "Speed (km/h)", font=font, fill=1)
                     
-                    oled.canvas.line((25,30,128,30), width=1, fill=1)        
-                    oled.canvas.text((3,25), "100", font=font, fill=1)
-                    oled.canvas.line((25,48,128,48), width=1, fill=1)
-                    oled.canvas.text((3,43), "50", font=font, fill=1)
-                    oled.canvas.line((25,11,128,11), width=1, fill=1)
-                    oled.canvas.text((3,6), "150", font=font, fill=1)
+                    self.oled.canvas.line((25,30,128,30), width=1, fill=1)        
+                    self.oled.canvas.text((3,25), "100", font=font, fill=1)
+                    self.oled.canvas.line((25,48,128,48), width=1, fill=1)
+                    self.oled.canvas.text((3,43), "50", font=font, fill=1)
+                    self.oled.canvas.line((25,11,128,11), width=1, fill=1)
+                    self.oled.canvas.text((3,6), "150", font=font, fill=1)
                     
                     
                     for i in list(speedq):
                         x = x + 2 
                         y = 63 - int(((i-10)/170)*63) 
                         #print("x:{}  y:{}".format(x,y))                            
-                        oled.canvas.line((x,63,x,y), width=2, fill=1)
+                        self.oled.canvas.line((x,63,x,y), width=2, fill=1)
             
                     
                     
-                elif(LcdDisplayMode == 3):
+                elif(self.LcdDisplayMode == 3):
 
                     x = 24 
-                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
                     
-                    oled.canvas.text((40,1), "Altitude (m)", font=font, fill=1)
+                    self.oled.canvas.text((40,1), "Altitude (m)", font=font, fill=1)
                     
-                    oled.canvas.line((25,54,128,54), width=1, fill=1)        
-                    oled.canvas.text((3,49), "160", font=font, fill=1)
-                    oled.canvas.line((25,38,128,38), width=1, fill=1)
-                    oled.canvas.text((3,33), "320", font=font, fill=1)
-                    oled.canvas.line((25,22,128,22), width=1, fill=1)
-                    oled.canvas.text((3,17), "480", font=font, fill=1)
+                    self.oled.canvas.line((25,54,128,54), width=1, fill=1)        
+                    self.oled.canvas.text((3,49), "160", font=font, fill=1)
+                    self.oled.canvas.line((25,38,128,38), width=1, fill=1)
+                    self.oled.canvas.text((3,33), "320", font=font, fill=1)
+                    self.oled.canvas.line((25,22,128,22), width=1, fill=1)
+                    self.oled.canvas.text((3,17), "480", font=font, fill=1)
                     
                     
                     for i in list(altq):
                         x = x + 2 
                         y = 63 - int(((i-70)/630)*63) 
                         #print("x:{}  y:{}".format(x,y))                            
-                        oled.canvas.line((x,63,x,y), width=2, fill=1)
+                        self.oled.canvas.line((x,63,x,y), width=2, fill=1)
                                         
                 
 
-                elif(LcdDisplayMode == 4):
-                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
+                elif(self.LcdDisplayMode == 4):
+                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
                     if(agps_thread.data_stream.mode == 3):
                         gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)                        
-                        oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
+                        self.oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
                     else:
-                        oled.canvas.text((10,20), "No fix", font=font30, fill=1)
+                        self.oled.canvas.text((10,20), "No fix", font=font30, fill=1)
                         
 
                 
                 else:
-                    oled.canvas.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=0)
-                    oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
-                    oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
-                    oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
-                    oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
-                    oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
-                    #print("LCDString1: %s" % lcdline1)
-                    #print("LCDString2: %s" % lcdline2)
-                    #print("LCDString3: %s" % lcdline3)
-
+                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
+                    self.oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
+                    self.oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
+                    self.oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
+                    self.oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
+                    self.oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
 
             i2cLock.acquire()
             try:
-                oled.display()
+                self.oled.display()
             finally:
                 i2cLock.release()
 
                         
-            if(lcd != None):            
+            if(self.lcd != None):            
                 lcdline3 = datetime.datetime.now()
                 i2cLock.acquire()
                 try:
-                    lcd.clear
-                    lcd.setPosition(1, 0) 
-                    lcd.writeString(lcdline1)
-                    lcd.setPosition(2, 0) 
-                    lcd.writeString(lcdline2)
+                    self.lcd.clear
+                    self.lcd.setPosition(1, 0) 
+                    self.lcd.writeString(lcdline1)
+                    self.lcd.setPosition(2, 0) 
+                    self.lcd.writeString(lcdline2)
                     logging.debug("LCDString1: %s" % lcdline1)
                     logging.debug("LCDString2: %s" % lcdline2)
                 finally:
@@ -501,70 +411,203 @@ def IntegertoRGB(numberin):
     return rgb
  
 class TempUpdates(threading.Thread):
+
     
     def __init__(self):
         threading.Thread.__init__(self)
         self.current_value = None
-        self.running = True #setting the thread running to true 
+        self.running = True #setting the thread running to true
         
+        self.EngineTemp = 0; 
+        self.AmbientTemp = 0
+                
+        # Configuration for MAX6675 temperature sensor board 
+        cs_pin = 22
+        clock_pin = 27
+        data_pin = 17
+        units = "c"
+        
+        try:            
+            self.thermocouple = MAX6675(cs_pin, clock_pin, data_pin, units)
+        except:
+            logging.error("Failed to create MAX6675 thermocouple object", exc_info=True)
+            self.thermocouple = None 
+        
+        
+        # LED strip configuration:
+        LED_COUNT      = 12       # Number of LED pixels.
+        LED_PIN        = 18      # GPIO pin connected to the pixels (must support PWM!).
+        LED_FREQ_HZ    = 800000  # LED signal frequency in hertz (usually 800khz)
+        LED_DMA        = 5       # DMA channel to use for generating signal (try 5)
+        LED_BRIGHTNESS = 50     # Set to 0 for darkest and 255 for brightest
+        LED_INVERT     = False   # True to invert the signal (when using NPN transistor level shift)
+
+        try:
+            self.strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS)
+            self.strip.begin()
+        except:
+            logging.info("WS2812 LED strip/ring not found", exc_info=True)
+            self.strip = None
+            
+        #BMP085 configuration            
+        i2cLock.acquire()    
+        try:
+            self.tmp = BMP085.BMP085()
+        except:
+            logging.error("BMP085 IO Error", exc_info=True)
+            self.tmp = None
+        finally:
+            i2cLock.release()
+
+        
+        # nine degrees of freedom (MPU6050 sensor) configuration
+        i2cLock.acquire()
+        try:
+            self.ninedof = sensor.sensor()
+            self.ninedof.start()
+        except IOError:
+            logging.error("9dof sensor init error", exc_info=True)
+            self.ninedof = None
+        finally:
+            i2cLock.release()
+       
         
     def run(self):                 
         while self.running:
-            UpdateTemps()
+            self.UpdateTemps()
             time.sleep(1)
+
+
+    def UpdateTemps(self):
+        global lcdline1
+        global lcdline2
+        global lcdline3
+        global oldktemp
+        global strip
+        
+        
+        if(self.tmp != None):
+            i2cLock.acquire()
+            try:        
+                self.AmbientTemp = self.tmp.read_temperature()
+                logTemplineDB("ambient", self.AmbientTemp)
+            except:                
+                logging.error("UpdateTemps() Ambient Temp Read Error: ", exc_info=True)
+            finally:
+                i2cLock.release()
+        else:
+            self.AmbientTemp = 99
+    
+        try:
+            self.EngineTemp = self.thermocouple.get()
+            if(self.EngineTemp < 200 ):                  # check to remove unrealistic measurement...which happen frequently due to engine noise.              
+                ktempq.append(self.EngineTemp)            
+                qavg = sum(ktempq) / ktempq.__len__()
+                if(abs(self.EngineTemp-qavg) < 10):
+                    logTemplineDB("engine", self.EngineTemp)
+              
+        except KeyboardInterrupt:                        
+            raise   
+        except MAX6675Error as e:
+            self.EngineTemp = -10
+            logging.error("UpdateTemps() Excepted getting enginetemp: ", exc_info=True)
+        
+        if(self.ninedof != None):
+            i2cLock.acquire()
+            try:
+                roll = self.ninedof.roll   
+            except:
+                logging.error("UpdateTemps() ninedof sensor couldn't be read", exc_info=True)
             
- 
+            finally:
+                i2cLock.release()
+    
+                            
+            roll = roll + 90
+            charposition = round(abs(roll/12)) 
+            if (charposition < 12 and strip != None):
+                try:
+                    blackout(self.strip)
+                    self.strip.setPixelColorRGB(charposition, 100, 100, 100)
+                    self.strip.show()
+                except:
+                    logging.error("UpdateTemps() couldn't write to led strip", exc_info=True)
+    
+    
+        
+        #if(strip != None):
+            
+            #colour = IntegertoRGB(EngineTemp-80)
+            #strip.setPixelColorRGB(0, int(colour[0]*255), int(colour[1]*255), int(colour[2]*255))        
+            #colour = IntegertoRGB(AmbientTemp-25)
+            #strip.setPixelColorRGB(1, int(colour[0]*255), int(colour[1]*255), int(colour[2]*255))
+            #strip.show()
+            #logging.error("changed LEDs")
+    
+    
+    
+    def blackout(strip):
+        for i in range(max(strip.numPixels(), strip.numPixels())):
+            strip.setPixelColor(i, Color(0,0,0))
+            strip.show()
+
+
+            
+
+def get_lock(process_name):
+    # Without holding a reference to our socket somewhere it gets garbage
+    # collected when the function exits
+    get_lock._lock_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+
+    try:
+        get_lock._lock_socket.bind('\0' + process_name)
+        logging.info("Created lock for process")
+    except socket.error:
+        logging.info("Lock exists. Process is already running")
+        print("Lock exists. Process is already running")
+        sys.exit()
+
  
 if __name__ == "__main__":
     logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', filename='./MotorcycleMU.log', level=logging.DEBUG)
     
     
-    tmp = None
+    get_lock('motorcyclemu')
+    #initialize various components. 
+    
+ 
+    
+    i2cLock = threading.Lock()    
+    i2cbus = SMBus(1)        
+    
+    adc = Adafruit_ADS1x15.ADS1115()
+    GAIN = 1
+
+    
+
+
+    
     
     try:
         agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
         agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
-        agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default 0.2 second, default daemon=True
-    
+        agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default 0.2 second, default daemon=True    
     except:
-        logging.error("GPS Connection Error", exc_info=True)
-        
-    #try:
-    #    tmp = BMP085.BMP085()
-    #except:
-    #    logging.error("BMP085 IO Error", exc_info=True)
-    #    tmp = None
+        logging.error("Error creating GPS objects or data stream", exc_info=True)
+    
 
-    #try:
-    #    ninedof = sensor.sensor()
-    #    ninedof.start()
-    #except IOError:
-    #    logging.error("9dof sensor init error", exc_info=True)
-    #    ninedof = None
-    ninedof = None
+
+
     
+   
+
     
+
+
+
+
     logging.info("Logging started")
     signal.signal(signal.SIGINT, signal_quitting)
-    
-    # Configuration parameters
-    # I2C Address, Port, Enable pin, RW pin, RS pin, Data 4 pin, Data 5 pin, Data 6 pin, Data 7 pin, Backlight pin (optional)
-    i2cLock.acquire()
-    try:
-        lcd = i2c_lcd.i2c_lcd(0x27, 1, 2, 1, 0, 4, 5, 6, 7, 3)
-        lcd.backLightOn()
-    except IOError:
-        logging.info("LCD (the green kind) not found on I2C", exc_info=True)
-        lcd = None
-    finally:
-        i2cLock.release()
-    
-    try:
-        strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS)
-        strip.begin()
-    except:
-        logging.info("WS2812 LED strip/ring not found", exc_info=True)
-        strip = None
     
     
     try:        
@@ -576,10 +619,10 @@ if __name__ == "__main__":
     
         buttonwatcher = ButtonWatcher()
         buttonwatcher.start()
-    
-        #if(lcd != None):
+
         lcdthread = LcdUpdate()
         lcdthread.start()
+
         while True: time.sleep(100)
     except:
         raise    
