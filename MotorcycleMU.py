@@ -97,7 +97,7 @@ class GpsPoller(threading.Thread):
        
         while gpsp.running:
             self.LogGPSPoint()
-            time.sleep(2)
+            time.sleep(1)
 
     def LogGPSPoint(self):
 
@@ -114,6 +114,7 @@ class GpsPoller(threading.Thread):
             sys.exit(1)
             
         try:    
+            print(agps_thread.data_stream.mode)
             if(agps_thread.data_stream.mode == 3):
                 gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)
                 logging.debug("difference in old points {0}, {1} ".format(abs(self.oldlat - agps_thread.data_stream.lat), abs(self.oldlong - agps_thread.data_stream.lon)))
@@ -129,7 +130,7 @@ class GpsPoller(threading.Thread):
                                                                                                                                                                                                                                       agps_thread.data_stream.track, 
                                                                                                                                                                                                                                       agps_thread.data_stream.climb, 
                                                                                                                                                                                                                                       ktempq[-1], 
-                                                                                                                                                                                                                                      AmbientTemp, 
+                                                                                                                                                                                                                                      tempthread.AmbientTemp, 
                                                                                                                                                                                                                                       len(agps_thread.data_stream.satellites))
                     sql = sql.replace("nan", "-9999")
                     cur.execute(sql)
@@ -139,16 +140,16 @@ class GpsPoller(threading.Thread):
                     logging.debug("Rows inserted: %s" % cur.rowcount)
                     logging.debug("SQL String: %s" % sql)
                 
-                lcdthread.lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.altitude)
+                lcdthread.lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.alt)
                 lcdthread.lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
                 lcdthread.lcdline3 = gtime.strftime('%I:%M')
                 speedq.append(agps_thread.data_stream.speed * 3.6)
-                altq.append(agps_thread.data_stream.altitude)
+                altq.append(agps_thread.data_stream.alt)
                 
             elif(agps_thread.data_stream.mode != 3):
                 lcdthread.lcdline1 = "  "
                 lcdthread.lcdline2 = "NoFix"
-                lcdthread.lcdline3 = "  "
+                lcdthread.lcdline3 = "  g  "
 
         except KeyboardInterrupt:                        
             raise
@@ -212,7 +213,7 @@ class LcdUpdate(threading.Thread):
         self.current_value = None
         self.running = True #setting the thread running to true 
         
-        self.LcdDisplayMode = 2    
+        self.LcdDisplayMode = 0    
         self.ChangeLCDMode = False
         
         self.lcdline1 = "  "
@@ -248,9 +249,7 @@ class LcdUpdate(threading.Thread):
             i2cLock.release()
         
     def run(self):        
-        global lcdline1
-        global lcdline2                 
-        global lcdline3
+
                 
         counter = 0
          
@@ -337,7 +336,7 @@ class LcdUpdate(threading.Thread):
 
                 elif(self.LcdDisplayMode == 4):
                     self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    if(agps_thread.data_stream.mode == 3):
+                    if(agps_thread.data_stream.mode >= 2):
                         gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)                        
                         self.oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
                     else:
@@ -347,11 +346,11 @@ class LcdUpdate(threading.Thread):
                 
                 else:
                     self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    self.oled.canvas.text((66,8), "E{0:3.0f}".format(EngineTemp), font=font20, fill=1)
-                    self.oled.canvas.text((66,33), "A{0:3.0f}".format(AmbientTemp), font=font20, fill=1)
-                    self.oled.canvas.text((8,8), lcdline2, font=font15, fill=1)
-                    self.oled.canvas.text((8,24), lcdline1, font=font15, fill=1)
-                    self.oled.canvas.text((8,40), lcdline3, font=font15, fill=1)
+                    self.oled.canvas.text((66,8), "E{0:3.0f}".format(tempthread.EngineTemp), font=font20, fill=1)
+                    self.oled.canvas.text((66,33), "A{0:3.0f}".format(tempthread.AmbientTemp), font=font20, fill=1)
+                    self.oled.canvas.text((8,8), self.lcdline2, font=font15, fill=1)
+                    self.oled.canvas.text((8,24), self.lcdline1, font=font15, fill=1)
+                    self.oled.canvas.text((8,40), self.lcdline3, font=font15, fill=1)
 
             i2cLock.acquire()
             try:
@@ -366,11 +365,11 @@ class LcdUpdate(threading.Thread):
                 try:
                     self.lcd.clear
                     self.lcd.setPosition(1, 0) 
-                    self.lcd.writeString(lcdline1)
+                    self.lcd.writeString(self.lcdline1)
                     self.lcd.setPosition(2, 0) 
-                    self.lcd.writeString(lcdline2)
-                    logging.debug("LCDString1: %s" % lcdline1)
-                    logging.debug("LCDString2: %s" % lcdline2)
+                    self.lcd.writeString(self.lcdline2)
+                    logging.debug("LCDString1: %s" % self.lcdline1)
+                    logging.debug("LCDString2: %s" % self.lcdline2)
                 finally:
                     i2cLock.release()
             
@@ -455,12 +454,6 @@ class TempUpdates(threading.Thread):
         self.ninedof.stop()
 
     def UpdateTemps(self):
-        global lcdline1
-        global lcdline2
-        global lcdline3
-        
-                
-        
         if(self.tmp != None):
             i2cLock.acquire()
             try:        
