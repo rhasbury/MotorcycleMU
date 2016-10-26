@@ -46,6 +46,8 @@ def signal_quitting(signal, frame):
     global gpsp
     logging.info("Received Sigint, killing threads and waiting for join. ")
     
+    agps_thread.stop()
+    
     gpsp.running = False
     tempthread.running = False
     lcdthread.running = False
@@ -115,10 +117,11 @@ class GpsPoller(threading.Thread):
             
         try:    
             print(agps_thread.data_stream.mode)
-            if(agps_thread.data_stream.mode == 3):
+            
+            if(agps_thread.data_stream.mode == 2 or agps_thread.data_stream.mode == 3):
                 gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)
                 logging.debug("difference in old points {0}, {1} ".format(abs(self.oldlat - agps_thread.data_stream.lat), abs(self.oldlong - agps_thread.data_stream.lon)))
-                if(abs(self.oldlat - agps_thread.data_stream.lat) > self.logradius or abs(self.oldlong - agps_thread.data_stream.lon) > self.logradius):                 
+                if(1): #abs(self.oldlat - agps_thread.data_stream.lat) > self.logradius or abs(self.oldlong - agps_thread.data_stream.lon) > self.logradius):                 
                     #print ('time utc    ' , gpsd.utc)
                     #print ('time utc    ' , agps_thread.data_stream.time)                
                     sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
@@ -137,8 +140,9 @@ class GpsPoller(threading.Thread):
                     con.commit()                
                     self.oldlat = agps_thread.data_stream.lat
                     self.oldlong = agps_thread.data_stream.lon
-                    logging.debug("Rows inserted: %s" % cur.rowcount)
-                    logging.debug("SQL String: %s" % sql)
+                    
+                    logging.info("Rows inserted: %s" % cur.rowcount)
+                    logging.info("SQL String: %s" % sql)
                 
                 lcdthread.lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.alt)
                 lcdthread.lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
@@ -219,8 +223,7 @@ class LcdUpdate(threading.Thread):
         self.lcdline1 = "  "
         self.lcdline2 = "NoFix"
         self.lcdline3 = "  "
-
-                        
+        
                         
         i2cLock.acquire()
         try:
@@ -336,7 +339,7 @@ class LcdUpdate(threading.Thread):
 
                 elif(self.LcdDisplayMode == 4):
                     self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    if(agps_thread.data_stream.mode >= 2):
+                    if(agps_thread.data_stream.mode == 2 or agps_thread.data_stream.mode == 3):
                         gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)                        
                         self.oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
                     else:
@@ -556,6 +559,8 @@ if __name__ == "__main__":
         agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
         agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
         agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default 0.2 second, default daemon=True    
+
+        
     except:
         logging.error("Error creating GPS objects or data stream", exc_info=True)
 
@@ -564,18 +569,19 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_quitting)
     
     
-    try:        
-        gpsp = GpsPoller()
-        gpsp.start()
-        
+    try:       
+        lcdthread = LcdUpdate()
         tempthread = TempUpdates()
-        tempthread.start()
-    
+        gpsp = GpsPoller()
         buttonwatcher = ButtonWatcher()
+        
+        
+        tempthread.start()
+        gpsp.start()
+        lcdthread.start()
         buttonwatcher.start()
 
-        lcdthread = LcdUpdate()
-        lcdthread.start()
+
 
         while True: time.sleep(100)
     except:
