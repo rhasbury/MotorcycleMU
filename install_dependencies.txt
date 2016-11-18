@@ -27,5 +27,7 @@ sudo pip3 install adafruit-bmp
 git clone https://github.com/jgarff/rpi_ws281x
 git clone https://github.com/adafruit/Adafruit_Python_MAX31855
 
-
 sudo adduser pi i2c
+
+
+sudo update-rc.d motorcyclemu defaults

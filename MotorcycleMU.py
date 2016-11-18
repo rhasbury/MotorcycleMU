@@ -573,14 +573,44 @@ if __name__ == "__main__":
         lcdthread = LcdUpdate()
         tempthread = TempUpdates()
         gpsp = GpsPoller()
+<<<<<<< .mine
+        tempthread = TempUpdates()
         buttonwatcher = ButtonWatcher()
+        lcdthread = LcdUpdate()
+        
+        gpsp.start()
+||||||| .r8
+        gpsp.start()
+=======
+        buttonwatcher = ButtonWatcher()
+>>>>>>> .r9
+<<<<<<< .mine
+||||||| .r8
+        
+        tempthread = TempUpdates()
+=======
         
         
+>>>>>>> .r9
         tempthread.start()
+<<<<<<< .mine
+||||||| .r8
+    
+        buttonwatcher = ButtonWatcher()
+=======
         gpsp.start()
         lcdthread.start()
+>>>>>>> .r9
         buttonwatcher.start()
+<<<<<<< .mine
+        lcdthread.start()
+||||||| .r8
 
+        lcdthread = LcdUpdate()
+        lcdthread.start()
+=======
+
+>>>>>>> .r9
 
 
         while True: time.sleep(100)
