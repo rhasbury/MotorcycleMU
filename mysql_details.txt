@@ -1,0 +1,32 @@
+root password is blank
+Thermostat user is "monitor" password is "password"
+
+
+CREATE USER 'monitor'@'localhost' IDENTIFIED BY 'password';
+GRANT ALL PRIVILEGES ON * . * TO 'monitor'@'localhost';
+FLUSH PRIVILEGES;
+
+
+
+
+CREATE TABLE gps (n_lat NUMERIC(10,5), w_long NUMERIC(10,5), date_time DATETIME, fix_time DATETIME, speed NUMERIC(5,2), altitude NUMERIC(5,2), mode INTEGER, track NUMERIC(10,5), climb NUMERIC(5,2), enginetemp NUMERIC(5,2), ambienttemp NUMERIC(5,2), satellites INTEGER);
+
+CREATE TABLE tempdat (tdate DATETIME, zone TEXT, temperature NUMERIC(10,5));
+
+CREATE TABLE pressdat (tdate DATETIME, zone TEXT, pressure NUMERIC(10,5);
+
+CREATE TABLE humdat (tdate DATETIME, zone TEXT, humidity NUMERIC(10,5));
+
+Query for pulling GPX visualizer data
+SELECT 'date', 'latitude', 'longitude' UNION SELECT date_time, n_lat, w_long FROM gps ORDER BY date DESC LIMIT 10000 INTO OUTFILE '/home/pi/temperature/gpxvisualiser.txt' FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
+
+<<<<<<< .mine
+SELECT 'date', 'fix_time', 'latitude', 'longitude', 'enginetemp', 'ambienttemp' UNION SELECT date_time, fix_time, n_lat, w_long, enginetemp, ambienttemp FROM temps.gps WHERE date_time BETWEEN '2015-09-21 00:00:00' AND '2015-09-23 00:00:00' INTO OUTFILE '/home/pi/temperature/gpxvisualiser.txt' FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
+=======
+SELECT 'date', 'fix_time', 'latitude', 'longitude', 'enginetemp', 'ambienttemp' UNION SELECT date_time, fix_time, n_lat, w_long, enginetemp, ambienttemp FROM temps.gps WHERE fix_time BETWEEN '2015-09-26 00:00:00' AND '2015-09-27 00:00:00' INTO OUTFILE '/home/pi/temperature/gpxvisualis2er.txt' FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
+>>>>>>> .r13
+
+CREATE TABLE gps (n_lat NUMERIC(10,5), w_long NUMERIC(10,5), date_time DATETIME, fix_time DATETIME, speed NUMERIC(5,2), altitude NUMERIC(5,2), mode INTEGER, track NUMERIC(10,5), climb NUMERIC(5,2), enginetemp NUMERIC(5,2), ambienttemp NUMERIC(5,2), satellites INTEGER);
+
+
+SELECT * FROM gps.gps WHERE fix_time BETWEEN '2015-09-26 00:00:00' AND '2015-09-27 00:00:00' INTO OUTFILE '/home/pi/gpxvisua2er.txt' FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';

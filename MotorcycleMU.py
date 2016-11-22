@@ -46,8 +46,6 @@ def signal_quitting(signal, frame):
     global gpsp
     logging.info("Received Sigint, killing threads and waiting for join. ")
     
-    agps_thread.stop()
-    
     gpsp.running = False
     tempthread.running = False
     lcdthread.running = False
@@ -116,12 +114,11 @@ class GpsPoller(threading.Thread):
             sys.exit(1)
             
         try:    
-            print(agps_thread.data_stream.mode)
-            
-            if(agps_thread.data_stream.mode == 2 or agps_thread.data_stream.mode == 3):
+            #print(agps_thread.data_stream.mode)
+            if(agps_thread.data_stream.mode == 3):
                 gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)
                 logging.debug("difference in old points {0}, {1} ".format(abs(self.oldlat - agps_thread.data_stream.lat), abs(self.oldlong - agps_thread.data_stream.lon)))
-                if(1): #abs(self.oldlat - agps_thread.data_stream.lat) > self.logradius or abs(self.oldlong - agps_thread.data_stream.lon) > self.logradius):                 
+                if(abs(self.oldlat - agps_thread.data_stream.lat) > self.logradius or abs(self.oldlong - agps_thread.data_stream.lon) > self.logradius):                 
                     #print ('time utc    ' , gpsd.utc)
                     #print ('time utc    ' , agps_thread.data_stream.time)                
                     sql = "insert into gps(n_lat, w_long, date_time, fix_time, speed, altitude, mode, track, climb, enginetemp, ambienttemp, satellites) values(%s, %s, NOW(), FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s, %s)" % (agps_thread.data_stream.lat, 
@@ -140,9 +137,8 @@ class GpsPoller(threading.Thread):
                     con.commit()                
                     self.oldlat = agps_thread.data_stream.lat
                     self.oldlong = agps_thread.data_stream.lon
-                    
-                    logging.info("Rows inserted: %s" % cur.rowcount)
-                    logging.info("SQL String: %s" % sql)
+                    logging.debug("Rows inserted: %s" % cur.rowcount)
+                    logging.debug("SQL String: %s" % sql)
                 
                 lcdthread.lcdline1 = "{: >4.1f} m".format(agps_thread.data_stream.alt)
                 lcdthread.lcdline2 = "{: >4.1f} km".format(agps_thread.data_stream.speed * 3.6)
@@ -180,35 +176,31 @@ class ButtonWatcher(threading.Thread):
         i2cLock.acquire()
         try:
             self.adc = Adafruit_ADS1x15.ADS1115()
-    
         finally:
             i2cLock.release()
-            
-            
         
         self.GAIN = 1 
     
     
     def run(self):
-        
-        released = True
         while (self.running):
-                
             # Check for button press on ADC
             i2cLock.acquire()
             try:
                 value = self.adc.read_adc(0, gain=self.GAIN)
             finally:
                 i2cLock.release()
-                
-            if(value > 500 and released == True):
-                lcdthread.ChangeLCDMode = True
-                released = False
             
+            try:
+                mode = int(abs(round((value/28200)*4, 0)))
+            except:
+                logging.error("lcd mode change failed ", exc_info=True)
+            
+            if(mode != "n/a"):
+                lcdthread.LcdDisplayMode = mode
+            
+            #print(lcdthread.LcdDisplayMode)
             time.sleep(0.01)
-            
-            if(value < 500 ):
-                released = True
         
  
 class LcdUpdate(threading.Thread):    
@@ -222,8 +214,7 @@ class LcdUpdate(threading.Thread):
         
         self.lcdline1 = "  "
         self.lcdline2 = "NoFix"
-        self.lcdline3 = "  "
-        
+        self.lcdline3 = "  "   
                         
         i2cLock.acquire()
         try:
@@ -257,103 +248,110 @@ class LcdUpdate(threading.Thread):
         counter = 0
          
         while self.running:
-            if(self.ChangeLCDMode == True):
-                if(self.LcdDisplayMode == 5):
-                    self.LcdDisplayMode = 0
-                else:
-                    self.LcdDisplayMode += 1
-                time.sleep(0.2)
-                self.ChangeLCDMode = False
-            else:
-                time.sleep(0.2)
+            #if(self.ChangeLCDMode == True):
+            #    if(self.LcdDisplayMode == 5):
+            #        self.LcdDisplayMode = 0
+            #    else:
+            #        self.LcdDisplayMode += 1
+            #    time.sleep(0.2)
+            #    self.ChangeLCDMode = False
+            #else:
+            #    time.sleep(0.2)
+            
+            time.sleep(0.2)
                         
             if(self.oled != None):
                 
-                if(self.LcdDisplayMode == 1):                
-
-                    x = 24 
-                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    
-                    self.oled.canvas.text((30,1),  "Engine Temp (\N{DEGREE SIGN}C)", font=font, fill=1)
-                    
-                    self.oled.canvas.line((25,30,128,30), width=1, fill=1)        
-                    self.oled.canvas.text((3,25), "100", font=font, fill=1)
-                    self.oled.canvas.line((25,48,128,48), width=1, fill=1)
-                    self.oled.canvas.text((3,43), "50", font=font, fill=1)
-                    self.oled.canvas.line((25,11,128,11), width=1, fill=1)
-                    self.oled.canvas.text((3,6), "150", font=font, fill=1)
-                    
-                    
-                    for i in list(ktempq):
-                        x = x + 2 
-                        y = 63 - int(((i-10)/170)*63) 
-                        #print("x:{}  y:{}".format(x,y))                            
-                        self.oled.canvas.line((x,63,x,y), width=2, fill=1)
-
-                
-                elif(self.LcdDisplayMode == 2):
-                    
-                    x = 24 
-                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    
-                    self.oled.canvas.text((40,1), "Speed (km/h)", font=font, fill=1)
-                    
-                    self.oled.canvas.line((25,30,128,30), width=1, fill=1)        
-                    self.oled.canvas.text((3,25), "100", font=font, fill=1)
-                    self.oled.canvas.line((25,48,128,48), width=1, fill=1)
-                    self.oled.canvas.text((3,43), "50", font=font, fill=1)
-                    self.oled.canvas.line((25,11,128,11), width=1, fill=1)
-                    self.oled.canvas.text((3,6), "150", font=font, fill=1)
-                    
-                    
-                    for i in list(speedq):
-                        x = x + 2 
-                        y = 63 - int(((i-10)/170)*63) 
-                        #print("x:{}  y:{}".format(x,y))                            
-                        self.oled.canvas.line((x,63,x,y), width=2, fill=1)
-            
-                    
-                    
-                elif(self.LcdDisplayMode == 3):
-
-                    x = 24 
-                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    
-                    self.oled.canvas.text((40,1), "Altitude (m)", font=font, fill=1)
-                    
-                    self.oled.canvas.line((25,54,128,54), width=1, fill=1)        
-                    self.oled.canvas.text((3,49), "160", font=font, fill=1)
-                    self.oled.canvas.line((25,38,128,38), width=1, fill=1)
-                    self.oled.canvas.text((3,33), "320", font=font, fill=1)
-                    self.oled.canvas.line((25,22,128,22), width=1, fill=1)
-                    self.oled.canvas.text((3,17), "480", font=font, fill=1)
-                    
-                    
-                    for i in list(altq):
-                        x = x + 2 
-                        y = 63 - int(((i-70)/630)*63) 
-                        #print("x:{}  y:{}".format(x,y))                            
-                        self.oled.canvas.line((x,63,x,y), width=2, fill=1)
-                                        
-                
-
-                elif(self.LcdDisplayMode == 4):
-                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    if(agps_thread.data_stream.mode == 2 or agps_thread.data_stream.mode == 3):
-                        gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)                        
-                        self.oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
-                    else:
-                        self.oled.canvas.text((10,20), "No fix", font=font30, fill=1)
+                try:
+                    if(self.LcdDisplayMode == 1):                
+    
+                        x = 24 
+                        self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
                         
+                        self.oled.canvas.text((30,1),  "Engine Temp (\N{DEGREE SIGN}C)", font=font, fill=1)
 
+                        self.oled.canvas.line((25,30,128,30), width=1, fill=1)        
+                        self.oled.canvas.text((3,25), "100", font=font, fill=1)
+                        self.oled.canvas.line((25,48,128,48), width=1, fill=1)
+                        self.oled.canvas.text((3,43), "50", font=font, fill=1)
+                        self.oled.canvas.line((25,11,128,11), width=1, fill=1)
+                        self.oled.canvas.text((3,6), "150", font=font, fill=1)
+                        
+                        
+                        for i in list(ktempq):
+                            x = x + 2 
+                            y = 63 - int(((i-10)/170)*63) 
+                            #print("x:{}  y:{}".format(x,y))                            
+                            self.oled.canvas.line((x,63,x,y), width=2, fill=1)
+    
+                    
+                    elif(self.LcdDisplayMode == 2):
+                        
+                        x = 24 
+                        self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
+                        
+                        self.oled.canvas.text((40,1), "Speed (km/h)", font=font, fill=1)
+                        
+                        self.oled.canvas.line((25,30,128,30), width=1, fill=1)        
+                        self.oled.canvas.text((3,25), "100", font=font, fill=1)
+                        self.oled.canvas.line((25,48,128,48), width=1, fill=1)
+                        self.oled.canvas.text((3,43), "50", font=font, fill=1)
+                        self.oled.canvas.line((25,11,128,11), width=1, fill=1)
+                        self.oled.canvas.text((3,6), "150", font=font, fill=1)
+                        
+                        
+                        for i in list(speedq):
+                            x = x + 2 
+                            y = 63 - int(((i-10)/170)*63) 
+                            #print("x:{}  y:{}".format(x,y))                            
+                            self.oled.canvas.line((x,63,x,y), width=2, fill=1)
                 
-                else:
-                    self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
-                    self.oled.canvas.text((66,8), "E{0:3.0f}".format(tempthread.EngineTemp), font=font20, fill=1)
-                    self.oled.canvas.text((66,33), "A{0:3.0f}".format(tempthread.AmbientTemp), font=font20, fill=1)
-                    self.oled.canvas.text((8,8), self.lcdline2, font=font15, fill=1)
-                    self.oled.canvas.text((8,24), self.lcdline1, font=font15, fill=1)
-                    self.oled.canvas.text((8,40), self.lcdline3, font=font15, fill=1)
+                        
+                        
+                    elif(self.LcdDisplayMode == 4):
+    
+                        x = 24 
+                        self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
+                        
+                        self.oled.canvas.text((40,1), "Altitude (m)", font=font, fill=1)
+                        
+                        self.oled.canvas.line((25,54,128,54), width=1, fill=1)        
+                        self.oled.canvas.text((3,49), "160", font=font, fill=1)
+                        self.oled.canvas.line((25,38,128,38), width=1, fill=1)
+                        self.oled.canvas.text((3,33), "320", font=font, fill=1)
+                        self.oled.canvas.line((25,22,128,22), width=1, fill=1)
+                        self.oled.canvas.text((3,17), "480", font=font, fill=1)
+                        
+                        
+                        for i in list(altq):
+                            x = x + 2 
+                            y = 63 - int(((i-70)/630)*63) 
+                            #print("x:{}  y:{}".format(x,y))                            
+                            self.oled.canvas.line((x,63,x,y), width=2, fill=1)
+                                            
+                    
+    
+                    elif(self.LcdDisplayMode == 3):
+                        self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
+                        try:
+                            if(agps_thread.data_stream.mode >= 2):
+                                gtime = dateutil.parser.parse(agps_thread.data_stream.time) - timedelta(hours=4)                        
+                                self.oled.canvas.text((10,20), gtime.strftime('%I:%M'), font=font30, fill=1)
+                            else:
+                                self.oled.canvas.text((10,20), "No fix", font=font30, fill=1)
+                        except TypeError:
+                             self.oled.canvas.text((10,20), "No fix", font=font30, fill=1)
+                            
+                        
+                    else:
+                        self.oled.canvas.rectangle((0, 0, self.oled.width-1, self.oled.height-1), outline=1, fill=0)
+                        self.oled.canvas.text((66,8), "E{0:3.0f}".format(tempthread.EngineTemp), font=font20, fill=1)
+                        self.oled.canvas.text((66,33), "A{0:3.0f}".format(tempthread.AmbientTemp), font=font20, fill=1)
+                        self.oled.canvas.text((8,8), self.lcdline2, font=font15, fill=1)
+                        self.oled.canvas.text((8,24), self.lcdline1, font=font15, fill=1)
+                        self.oled.canvas.text((8,40), self.lcdline3, font=font15, fill=1)
+                except:
+                    logging.error("Painting canvas for oled failed", exc_info=True)
 
             i2cLock.acquire()
             try:
@@ -559,8 +557,6 @@ if __name__ == "__main__":
         agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
         agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
         agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default 0.2 second, default daemon=True    
-
-        
     except:
         logging.error("Error creating GPS objects or data stream", exc_info=True)
 
@@ -569,49 +565,16 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_quitting)
     
     
-    try:       
-        lcdthread = LcdUpdate()
-        tempthread = TempUpdates()
+    try:        
         gpsp = GpsPoller()
-<<<<<<< .mine
         tempthread = TempUpdates()
         buttonwatcher = ButtonWatcher()
         lcdthread = LcdUpdate()
         
         gpsp.start()
-||||||| .r8
-        gpsp.start()
-=======
-        buttonwatcher = ButtonWatcher()
->>>>>>> .r9
-<<<<<<< .mine
-||||||| .r8
-        
-        tempthread = TempUpdates()
-=======
-        
-        
->>>>>>> .r9
         tempthread.start()
-<<<<<<< .mine
-||||||| .r8
-    
-        buttonwatcher = ButtonWatcher()
-=======
-        gpsp.start()
-        lcdthread.start()
->>>>>>> .r9
         buttonwatcher.start()
-<<<<<<< .mine
         lcdthread.start()
-||||||| .r8
-
-        lcdthread = LcdUpdate()
-        lcdthread.start()
-=======
-
->>>>>>> .r9
-
 
         while True: time.sleep(100)
     except:
